@@ -12,15 +12,15 @@
 |---|---|
 | `hw.py` | 모터·서보·초음파·카메라 설정값과 기본 함수 |
 | `qr.py` | 웹캠 QR 인식 |
-| `arm.py` | 팔 자세 저장/이동, 집게, 집기(`pick`)/놓기(`place`) |
+| `arm.py` | 공통 자세(`drive`, `qr`) 저장/이동, 팔을 천천히 움직이기(`move_to`) |
+| `sequence.py` | 물체 옮기기: mode 별 위치 4곳 + lift + 집게 각도 저장, QR 방향에 맞는 순서로 실행 (4절) |
 | `drive.py` | 직진하다가 정지선에서 정지 |
-| `main.py` | 미션 1~5 순서대로 실행. 단계별 함수(`mission_qr`, `mission_drive`, `mission_arm`)로 나뉨 |
+| `main.py` | 미션 순서대로 실행. 단계별 함수(`mission_qr`, `mission_drive`, `mission_arm`)로 나뉨 |
 | `status.py` | 미션 진행 상태 (모드, QR 결과, 단계, 오류, 기록). OLED·웹이 같이 읽음 |
 | `display.py` | OLED 에 배터리 전압 + 미션 상태 표시 |
-| `align.py` | 상자 QR 로 1차 위치 보정 → 저장된 각도로 집기 (4-1절) |
-| `qr_refs.json` | QR 보정 기준 (보는 자세에서 QR 위치, 게인). 웹에서 만든다 |
-| `poses.json` | 저장한 팔 자세 (`webui` 나 `tests/test_arm.py` 로 Pi에서 만든다) |
-| `webui/` | 카메라·QR·초음파를 보면서 팔 자세 저장 + 미션 디버깅 실행 웹 페이지 (4절, 5절) |
+| `poses.json` | 공통 자세 `drive`, `qr` (웹이나 `tests/test_arm.py` 로 Pi에서 만든다) |
+| `modes.json` | mode1/mode2 위치·집게 각도 + 지금 쓰는 mode (웹에서 만든다) |
+| `webui/` | 카메라·QR·초음파를 보면서 위치 저장 + 미션 디버깅 실행 웹 페이지 (4절, 5절) |
 | `tests/` | 장치를 하나씩 확인하는 테스트 → [tests/README.md](tests/README.md) |
 
 ---
@@ -43,7 +43,7 @@ python3 main.py               # 전체 미션
 
 ### 코드 주고받기 (GitHub)
 - PC에서 고친 코드 → `git push` → Pi에서 `git pull`
-- Pi에서 만든 `poses.json` → Pi에서 `git add poses.json && git commit -m "..." && git push` → PC에서 `git pull`
+- Pi에서 만든 `poses.json`, `modes.json` → Pi에서 `git add poses.json modes.json && git commit -m "..." && git push` → PC에서 `git pull`
 - 한쪽에서 고친 걸 push 하기 전에 다른 쪽에서 같은 파일을 고치면 충돌이 나니, **작업 시작 전에 항상 `git pull`**
 
 ---
@@ -62,13 +62,14 @@ python3 main.py               # 전체 미션
 | `CAMERA_INDEX` | 웹캠 번호 (`/dev/video0` → 0) | `0` | 카메라가 안 열리면 `ls /dev/video*` 로 확인 |
 | `CAMERA_SIZE` | 카메라 해상도 | `(640, 480)` | QR이 잘 안 읽히면 키워 볼 수 있음 (느려짐) |
 
-### arm.py
+### arm.py / sequence.py
 | 값 | 의미 | 현재 | 찾는 법 |
 |---|---|---|---|
-| `GRIP_OPEN` | 집게가 열린 각도 | `None` | `test_arm.py` 에서 `4 <각도>` 로 물체가 충분히 들어갈 만큼 열리는 값 |
-| `GRIP_CLOSE` | 물체를 잡은 각도 | `None` | 물체를 넣고 조금씩 닫아서 **놓치지 않는 가장 약한 값**. 너무 세게 닫으면 서보가 "지잉" 소리를 내며 버틴다 (전류 많이 씀) |
-| `POSE_NAMES` | 미션에서 쓰는 자세 이름 목록 | 6개 | 아래 4절 참고 |
-| `move_to(step, delay)` | 한 번에 움직이는 각도(°)와 간격(초). 작을수록 부드럽고 느림 | `2`, `0.02` | 팔이 흔들리거나 물체를 넘어뜨리면 줄인다 |
+| `arm.POSE_NAMES` | mode 와 상관없는 공통 자세 | `drive`, `qr` | 4절 |
+| `arm.move_to(step, delay)` | 한 번에 움직이는 각도(°)와 간격(초). 작을수록 부드럽고 느림 | `2`, `0.02` | 팔이 흔들리거나 물체를 넘어뜨리면 줄인다 |
+| `sequence.MODES` | 위치 세트 이름 | `mode1`, `mode2` | 세트를 더 만들려면 이름 추가 |
+| `sequence.ORDER` | QR 방향별 위치 순서 | LEFT: `left_pick → right_place → right_pick → left_place` / RIGHT: `right_pick → left_place → left_pick → right_place` | |
+| 집게 열림/닫힘 | `modes.json` 의 `grip_open`, `grip_close` | 웹에서 저장 | 닫힘은 물체를 **놓치지 않는 가장 약한 값**. 너무 세게 닫으면 서보가 "지잉" 하며 버틴다 (전류 많이 씀) |
 
 ### drive.py
 
@@ -129,25 +130,41 @@ python3 -m unittest discover -s tests -p '*_logic.py'
 
 ---
 
-## 4. 팔 위치(자세) 저장하는 법
+## 4. 팔 위치 저장하는 법
 
-자세 = 팔 서보 3개(채널 1 팔 좌우, 2 팔 상하, 3 손목)의 각도 묶음. 집게(채널 4)는 자세에 넣지 않고 `GRIP_OPEN`/`GRIP_CLOSE` 로 따로 쓴다.
-
-### 저장할 자세
+### 저장할 것
+**공통 자세** (`poses.json`, mode 상관없음)
 | 이름 | 언제 쓰나 |
 |---|---|
 | `drive` | 주행할 때 접어 둔 자세 (모니터에 닿지 않게) |
 | `qr` | 출발선에서 모니터 QR이 웹캠에 잘 보이는 자세 |
-| `left_pick` | 왼쪽 상자 물체를 집는 위치 |
-| `left_place` | 왼쪽 상자 빈 칸에 놓는 위치 |
-| `right_pick` | 오른쪽 상자 물체를 집는 위치 |
-| `right_place` | 오른쪽 상자 빈 칸에 놓는 위치 |
-| `left_pick_view` 등 4개 | QR 보정용 "보는 자세". 웹의 **QR 보정** 카드에서 저장 (4-1절) |
 
-pick/place 자세는 **로봇을 실제 정지선 위치에 두고** 저장해야 한다 (정지 후에는 바퀴를 못 움직임).
+**물체 옮기기 위치** (`modes.json`, mode1 / mode2 각각 한 세트)
+| 이름 | 무엇 | 저장되는 값 |
+|---|---|---|
+| `left_pick` | 왼쪽 상자 물체를 집는 위치 | 팔 좌우·상하·손목 |
+| `right_place` | 오른쪽 상자 빈 칸에 놓는 위치 | 〃 |
+| `right_pick` | 오른쪽 상자 물체를 집는 위치 | 〃 |
+| `left_place` | 왼쪽 상자 빈 칸에 놓는 위치 | 〃 |
+| `lift` | 위치 사이를 옮겨 갈 때 거치는 들어 올린 자세 (상자·물체에 걸리지 않게) | 〃 |
+| `grip_open` | 집게 열림 | 집게 각도 |
+| `grip_close` | 집게 닫힘 (물체를 잡은 상태) | 집게 각도 |
+
+위치는 **로봇을 실제 정지선 위치에 두고** 저장한다 (정지 후에는 바퀴를 못 움직임).
+mode2 는 다른 배치·다른 방법을 시험해 볼 두 번째 세트다. 웹에서 고른 mode 가 저장과 실행 모두에 쓰인다.
+
+### 실행 순서 (`sequence.py`)
+```
+출발 QR LEFT  : left_pick  → right_place → right_pick → left_place
+출발 QR RIGHT : right_pick → left_place  → left_pick  → right_place
+
+집기(pick)  : lift → 집게 열기 → 위치 → 집게 닫기 → lift
+놓기(place) : lift → 위치 → 집게 열기 → lift
+끝나면 drive 자세
+```
+고른 mode 에 하나라도 저장 안 된 값이 있으면 시작하지 않고 `mode1 에 저장 안 된 위치: ...` 오류를 낸다.
 
 ### 방법 A: 웹 페이지 (추천)
-카메라 화면과 인식 중인 QR, 초음파 거리를 보면서 버튼으로 팔을 움직이고 저장한다.
 1. Pi에서 실행
    ```bash
    sudo systemctl stop Adeept_Robot.service
@@ -155,20 +172,38 @@ pick/place 자세는 **로봇을 실제 정지선 위치에 두고** 저장해�
    python3 webui/app.py
    ```
 2. PC 브라우저에서 **`http://192.168.50.2:5002`** 접속. 시작하면 팔·집게가 90°, 조향이 가운데로 간다.
-3. **서보 각도** 카드
+3. **서보 각도** 카드로 팔을 맞춘다
    - `1° 2° 5° 10°` 로 한 번에 움직일 각도를 고른다
    - `−` / `+` 버튼: 한 번 누르면 한 칸, **누르고 있으면 계속** 움직인다
    - 슬라이더: 끌어서 놓으면 그 각도로 천천히 이동
-4. **자세 저장** 카드
-   - 아래 칩(`○ left_pick` 등)을 누르면 이름 칸에 들어간다. ✓ 는 이미 저장된 자세
-   - **현재 자세 저장** → `poses.json` 에 팔 좌우·상하·손목 각도 저장 (같은 이름은 덮어쓰기 확인)
-   - 표의 **이동** 으로 다시 불러와 같은 위치로 오는지 확인, **삭제** 로 지우기
-5. 집게는 자세에 저장되지 않는다. 집게 행에서 열림/닫힘 각도를 찾아 `arm.py` 의 `GRIP_OPEN`, `GRIP_CLOSE` 에 직접 적는다.
-6. Ctrl+C 로 끄고 `poses.json` 을 push (아래 방법 B 의 5번)
+4. **물체 옮기기 위치** 카드
+   - **사용할 mode** 에서 `mode1` / `mode2` 를 고른다 (실행에도 이 mode 가 쓰임)
+   - 위치(`left_pick` …, `lift`) 행의 **저장** → 지금 팔 좌우·상하·손목 각도 저장
+   - 집게 행(`grip_open`, `grip_close`)의 **집게 각도 저장** → 지금 집게 각도 저장
+   - **이동** 으로 다시 불러와 같은 곳으로 오는지 확인. ✓ 저장됨, ○ 아직
+   - 위쪽 LEFT/RIGHT 순서 줄에서 초록 = 저장됨, 주황 = 아직
+5. **공통 자세** 카드에서 `drive`, `qr` 저장
+6. **미션 디버깅** 카드의 **LEFT 강제 → 팔만** / **RIGHT 강제 → 팔만** 으로 순서대로 움직이는지 확인
+7. Ctrl+C 로 끄고 `poses.json`, `modes.json` 을 push
 
 이 페이지가 켜져 있는 동안은 카메라·초음파·서보를 쓰는 다른 프로그램(`tests/`, `main.py`)을 같이 실행하지 않는다.
 
-### 방법 B: 터미널 (`tests/test_arm.py`)
+`modes.json` 은 이런 모양이다. 각도를 직접 고쳐도 된다.
+```json
+{
+  "active": "mode1",
+  "mode1": {
+    "left_pick": {"1": 120, "2": 60, "3": 70},
+    "lift": {"1": 90, "2": 120, "3": 100},
+    "grip_open": 40,
+    "grip_close": 120
+  },
+  "mode2": {}
+}
+```
+
+### 방법 B: 터미널 (`tests/test_arm.py`, 공통 자세만)
+`test_arm.py` 는 `poses.json`(공통 자세)만 저장한다. mode 위치는 웹에서 저장한다.
 1. Pi에서 웹 컨트롤러를 끄고 테스트 실행
    ```bash
    sudo systemctl stop Adeept_Robot.service
@@ -182,74 +217,7 @@ pick/place 자세는 **로봇을 실제 정지선 위치에 두고** 저장해�
    > 3 120        # 손목을 120°로
    > show         # 현재 각도 보기
    ```
-3. 원하는 위치가 되면 이름을 붙여 저장 (같은 이름으로 다시 저장하면 덮어씀)
-   ```
-   > save left_pick
-   ```
-4. 다른 자세로 갔다가 다시 불러와서 같은 위치로 오는지 확인
-   ```
-   > go drive
-   > go left_pick
-   > list         # 저장된 자세 전부 보기
-   > q
-   ```
-5. `poses.json` 이 생긴다. GitHub에 올린다
-   ```bash
-   git add poses.json
-   git commit -m "Save arm poses"
-   git push
-   ```
-
-`poses.json` 은 이런 모양이다. 각도를 직접 고쳐도 된다.
-```json
-{
-  "left_pick": {"1": 150, "2": 60, "3": 110}
-}
-```
-
----
-
-## 4-1. QR 로 1차 보정하고 집기 (`align.py`)
-
-### 생각
-- 카메라와 집게는 서로 고정, 상자 QR 과 물체의 위치도 고정이다.
-- 오차는 대부분 **로봇이 선 위치·방향**에서 생긴다 (정지 ±1~3cm, 차체가 살짝 비스듬함). 팔 끝에서는 이게 몇 cm 로 커진다.
-- 그래서 "보는 자세"에서 QR 이 **기준 때와 같은 화면 위치**에 오도록 팔을 맞추면 카메라-물체 관계가 기준과 같아진다.
-  그 뒤에는 저장해 둔 집는 자세에 **맞추느라 움직인 각도만큼 더해서** 간다.
-- 끝까지 QR 을 보면서 집지 않는 이유: 가까이 가면 QR 이 물체·집게에 가려지거나 화면을 벗어나고, 팔 3축을 계속 제어해야 해서 복잡·느림.
-- QR 을 못 찾거나 보정량이 너무 크면(`MAX_TOTAL_DEG`) **보정 없이 저장 각도 그대로** 진행한다.
-
-### 실행 순서 (집기 한 번)
-```
-left_pick_view 로 이동 → PICK QR 찾기 → 가로 위치 오차(px) → 팔 좌우를 오차/게인 만큼 → 반복 (오차 8px 이하까지)
-→ 움직인 각도 offset = 지금 각도 - view 저장 각도
-→ 집게 열기 → left_pick + offset 으로 이동 → 집게 닫기
-```
-한 화면에 PICK 과 PLACE 가 같이 보여도 원하는 글자의 QR 만 쓴다.
-
-### 준비 (웹 페이지, 상자 4곳 × 1번씩)
-1. 로봇을 **정지선 위 이상적인 위치**에 둔다 (바퀴 고정)
-2. 서보 버튼으로 해당 상자 QR(예: 왼쪽 상자 PICK)이 **화면 가운데쯤** 크게 보이게 팔을 맞춘다
-3. **QR 보정** 카드 → `left_pick_view` 행의 **QR 기준 저장**
-   - 지금 팔 자세를 `left_pick_view` 로 저장
-   - 그때 QR 위치를 기준으로 `qr_refs.json` 에 저장
-   - 팔 좌우를 4° 움직였다 돌아오며 **게인**(1° 당 QR 이 몇 픽셀 움직이는지, 부호 포함)을 잰다
-4. 로봇을 **움직이지 않고** 실제로 집는 자세를 만들어 **자세 저장** 카드에서 `left_pick` 저장
-5. `left_place`, `right_pick`, `right_place` 도 같은 방식
-6. **보정 시험**: 로봇을 조금 비스듬히/앞뒤로 옮겨 놓고 눌러 본다 → 진행 기록에 `err +35px` … `offset {1: 3}` 처럼 나온다
-7. 미션 디버깅 카드 → **LEFT 강제 → 팔만** 으로 전체 확인 (체크박스로 보정 켜기/끄기 비교)
-8. `poses.json`, `qr_refs.json` 을 push
-
-### 설정값 (`align.py`)
-| 값 | 의미 | 현재 |
-|---|---|---|
-| `QR_TEXT` | 상자 QR 글자 | `PICK`, `PLACE` (TODO: 실제 QR 확인) |
-| `AXES` | 보정에 쓰는 축. 팔 좌우 ↔ 화면 가로 | 팔 좌우만. 앞뒤 오차도 크면 `(SERVO_ARM_UP, 'cy')` 추가 (TODO) |
-| `TOL_PX` | 이만큼 안이면 맞춘 것 | `8` px |
-| `MAX_ITERS` | 최대 반복 | `6` |
-| `MAX_STEP_DEG` | 한 번에 최대 이동 | `6`° |
-| `MAX_TOTAL_DEG` | 이보다 많이 보정해야 하면 이상한 것 → 보정 안 함 | `15`° |
-| `SETTLE_SEC` | 팔이 멈추고 화면이 안정될 때까지 기다림 | `0.3` 초 |
+3. `save drive`, `go drive`, `list`, `q`
 
 ---
 
@@ -261,12 +229,13 @@ left_pick_view 로 이동 → PICK QR 찾기 → 가로 위치 오차(px) → �
 | 버튼 | 하는 일 | 로봇 위치 |
 |---|---|---|
 | **main 처음부터** | `main.py` 와 같은 순서: `qr` 자세 → QR 대기 → `drive` 자세 → 주행·정지 → 물체 2개 옮기기 | 출발선 |
-| **LEFT 강제 → 팔만** | QR 을 LEFT 로 정하고 미션 3~4 만 (왼쪽 집기 → 오른쪽 놓기 → 오른쪽 집기 → 왼쪽 놓기) | 정지선 |
-| **RIGHT 강제 → 팔만** | 위와 같고 RIGHT 부터 | 정지선 |
+| **LEFT 강제 → 팔만** | QR 을 LEFT 로 정하고 물체 옮기기만 (`left_pick → right_place → right_pick → left_place`) | 정지선 |
+| **RIGHT 강제 → 팔만** | QR 을 RIGHT 로 정하고 물체 옮기기만 (`right_pick → left_place → left_pick → right_place`) | 정지선 |
 | **정지** | 바퀴 즉시 정지 + 다음 단계로 넘어가지 않음 (지금 움직이는 팔 자세 하나는 끝까지 감) | |
 
-- 아래에 **모드 / QR / 단계 / 세부** 와 진행 기록이 실시간으로 나온다. 오류가 나면 빨간 글씨로 원인이 나온다 (예: `GRIP_CLOSE 를 먼저 채우세요`)
-- 미션이 도는 동안 서보 버튼·자세 저장은 막힌다
+- 위치는 **물체 옮기기 위치** 카드에서 고른 mode 를 쓴다. `python3 main.py` 도 마지막으로 웹에서 고른 mode(`modes.json` 의 `active`)를 쓴다
+- 아래에 **모드 / QR / 단계 / 세부** 와 진행 기록이 실시간으로 나온다. 오류가 나면 빨간 글씨로 원인이 나온다 (예: `mode1 에 저장 안 된 위치: lift`)
+- 미션이 도는 동안 서보 버튼·위치 저장·mode 바꾸기는 막힌다
 - "main 처음부터" 는 **버튼을 누른 뒤에** 새로 인식된 QR 만 받는다 (전에 보던 QR 로 바로 출발하지 않음)
 - QR 이 `LEFT*` 처럼 `*` 이 붙으면 강제로 정한 값
 
@@ -274,10 +243,10 @@ left_pick_view 로 이동 → PICK QR 찾기 → 가로 위치 오차(px) → �
 `main.py` 나 `webui/app.py` 를 실행하면 OLED 에 0.5초마다 표시된다 (영문만 나옴).
 ```
 BAT 7.85V  14:03:21     ← 배터리 전압, 6.3V 미만이면 LOW
-MODE FULL RUN           ← IDLE / FULL(main) / ARM(팔만), RUN = 실행 중
+MODE FULL m1 RUN        ← IDLE / FULL(main) / ARM(팔만) + 쓰는 mode, RUN = 실행 중
 QR   LEFT               ← 인식 결과 (LEFT* = 강제)
-STEP 2/4 DRIVE          ← 단계 (1/4 QR, 2/4 DRIVE, 2/4 STOP, 3/4 PICK ... DONE / ERROR)
-stop 30.2cm             ← 세부 (자세 이름, 정지 거리 등)
+STEP 2/3 DRIVE          ← 단계 (1/3 QR, 2/3 DRIVE, 2/3 STOP, ARM 1/4 ~ ARM 4/4, END, DONE / ERROR)
+stop 30.2cm             ← 세부 (위치 이름 + open/close/lift, 정지 거리 등)
 ERR ...                 ← 오류가 있을 때만
 ```
 단계 이름은 `main.py` 의 `status.step('이름', '세부')` 에서 정한다. 새 단계를 추가하면 여기에도 영문으로 적는다.
@@ -285,7 +254,8 @@ ERR ...                 ← 오류가 있을 때만
 ### 단계를 따로 실행 (Python)
 ```python
 >>> import main, status
->>> main.run_arm_only('left')            # = 웹의 LEFT 강제 → 팔만
+>>> main.run_arm_only('left')            # = 웹의 LEFT 강제 → 팔만 (웹에서 고른 mode)
+>>> main.run_arm_only('right', 'mode2')  # mode 를 직접 지정
 >>> status.snapshot()                    # 마지막 상태·기록
 >>> main.mission_drive()                 # 주행 단계 함수만 (drive 자세 → 정지선까지)
 ```
@@ -315,10 +285,12 @@ python3
 ### 미션을 나눠서 실행
 `main.py` 전체 대신 한 부분만:
 ```python
->>> import hw, qr, drive, arm
+>>> import hw, qr, drive, sequence
 >>> cap = hw.open_camera(); print(qr.wait_for_qr(cap, timeout=10)); cap.release()   # 미션 1
 >>> drive.drive_to_stop_line()                    # 미션 2
->>> arm.pick('left'); arm.place('right')          # 미션 3
+>>> sequence.missing('mode1')                     # 저장 안 된 위치 확인
+>>> sequence.go('mode1', 'left_pick')             # 위치 하나로 이동
+>>> sequence.run('left', 'mode1')                 # 물체 옮기기 전체
 ```
 
 ### 바퀴가 안 멈출 때

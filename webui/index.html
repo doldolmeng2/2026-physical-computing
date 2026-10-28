@@ -71,7 +71,7 @@
   .need .chip { cursor: pointer; }
   table { width: 100%; border-collapse: collapse; margin-top: 10px; font-variant-numeric: tabular-nums; }
   th, td { text-align: left; padding: 7px 6px; border-top: 1px solid var(--line); }
-  th { color: var(--muted); font-weight: 600; font-size: 13px; }
+  th { color: var(--muted); font-weight: 600; font-size: 13px; white-space: nowrap; }
   td.act { text-align: right; white-space: nowrap; }
   td.act button { padding: 4px 10px; }
   .empty { color: var(--muted); padding: 10px 0 0; }
@@ -79,7 +79,9 @@
   .check { display: flex; align-items: center; gap: 8px; margin-top: 10px; color: var(--muted); }
   .ok-t { color: var(--ok); font-weight: 600; }
   .no-t { color: var(--warn); }
-  #alignTable td { font-size: 13px; }
+  .seq { margin: 4px 0 6px; font-size: 13px; line-height: 1.9; }
+  .seq b { display: inline-block; width: 52px; }
+  td small { color: var(--muted); }
   button.stop { background: var(--bad); border-color: var(--bad); color: #fff; font-weight: 700; margin-left: auto; }
   button:disabled { opacity: .45; cursor: not-allowed; }
   .status { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
@@ -129,8 +131,7 @@
         <button data-run="arm" data-side="right">RIGHT 강제 → 팔만</button>
         <button class="stop" data-run="stop">정지</button>
       </div>
-      <label class="check"><input type="checkbox" id="useAlign" checked> 집기/놓기 전에 상자 QR로 보정 (끄면 저장된 각도 그대로)</label>
-      <p class="hint">"main 처음부터": QR 자세 → QR 대기 → 주행·정지 → 물체 2개. "강제 → 팔만": 로봇을 정지선에 미리 두고 물체 옮기기만.</p>
+      <p class="hint">"main 처음부터": qr 자세 → QR 대기 → drive 자세 → 주행·정지 → 물체 2개. "강제 → 팔만": 로봇을 정지선에 미리 두고 물체 옮기기만. 오른쪽 카드에서 고른 <b id="runMode">mode1</b> 위치를 씁니다.</p>
       <div class="status">
         <div><span>모드</span><b id="mMode">IDLE</b></div>
         <div><span>QR</span><b id="mQr">-</b></div>
@@ -148,24 +149,19 @@
       <div class="steps" id="steps"><span>한 번에</span></div>
       <div id="servos"></div>
       <p class="hint">버튼을 누르고 있으면 계속 움직입니다. 서보가 "지잉" 하고 버티면 바로 반대로 돌리세요.</p>
-      <p class="hint" id="gripHint"></p>
     </div>
 
     <div class="card">
-      <h2>자세 저장 (팔 좌우·상하·손목)</h2>
-      <div class="save">
-        <input id="poseName" list="poseNames" placeholder="자세 이름 (예: left_pick)">
-        <datalist id="poseNames"></datalist>
-        <button class="primary" id="saveBtn">현재 자세 저장</button>
-      </div>
-      <div class="need" id="need"></div>
+      <h2>물체 옮기기 위치 (mode 별)</h2>
+      <div class="steps" id="modeBtns"><span>사용할 mode</span></div>
+      <div class="seq" id="seq"></div>
+      <div id="modeTable"></div>
+      <p class="hint">로봇을 <b>정지선 위</b>에 두고, 서보 버튼으로 팔을 맞춘 뒤 <b>저장</b>. 위치·lift 는 팔 좌우·상하·손목, 집게 행은 집게 각도만 저장합니다. 고른 mode 가 실행에도 쓰입니다.</p>
+    </div>
+
+    <div class="card">
+      <h2>공통 자세 (mode 상관없음)</h2>
       <div id="poseTable"></div>
-    </div>
-
-    <div class="card">
-      <h2>QR 보정 (보는 자세 → 집는 자세)</h2>
-      <p class="hint" style="margin-top:0">로봇을 <b>정지선 위 이상적인 위치</b>에 두고: ① 상자 QR이 화면 가운데쯤 보이게 팔을 맞춘 뒤 <b>QR 기준 저장</b> (팔 좌우를 4° 움직여 1°에 몇 픽셀 움직이는지 잽니다) ② <b>같은 위치에서</b> 집는/놓는 자세(left_pick 등)를 위 카드에서 저장.</p>
-      <div id="alignTable"></div>
     </div>
   </section>
 </main>
@@ -239,60 +235,60 @@ function holdRepeat(btn, ch, dir) {
   for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) btn.addEventListener(ev, () => { held = false; });
 }
 
-// ---- 자세 ----
-$('saveBtn').onclick = async () => {
-  const name = $('poseName').value.trim();
-  if (!name) return toast('자세 이름을 입력하세요');
-  if (st && st.poses[name] && !confirm(`'${name}' 을(를) 지금 자세로 덮어쓸까요?`)) return;
-  try { await post('/api/pose/save', {name}); toast(`'${name}' 저장`); refresh(); }
-  catch (e) { toast(e.message); }
+const LABEL = {
+  left_pick: '왼쪽 집기', right_place: '오른쪽 놓기', right_pick: '오른쪽 집기', left_place: '왼쪽 놓기',
+  lift: '들어 올리기 (위치 사이에 거침)', grip_open: '집게 열림', grip_close: '집게 닫힘',
+  drive: '주행 (팔 접기)', qr: '출발 QR 보기',
 };
+const chLabel = ch => (st.channels.find(c => c.ch === ch) || {name: String(ch)}).name.replace('팔 ', '');   // 표 머리글은 짧게
+const armCells = v => st.arm_channels.map(ch => `<td>${v ? v[ch] ?? '—' : '—'}</td>`).join('');
+const savedMark = v => v != null ? '<span class="ok-t">✓</span>' : '<span class="no-t">○</span>';
 
-async function poseAction(action, name) {
-  if (action === 'delete' && !confirm(`'${name}' 을(를) 지울까요?`)) return;
-  try { await post('/api/pose/' + action, {name}); toast(action === 'go' ? `'${name}' 로 이동` : `'${name}' 삭제`); refresh(); }
-  catch (e) { toast(e.message); }
-}
-
+// ---- 공통 자세 (drive, qr) ----
 function renderPoses() {
-  const {poses, pose_names, arm_channels, channels} = st;
-  $('poseNames').innerHTML = pose_names.map(n => `<option value="${n}">`).join('');
-  $('need').innerHTML = pose_names.map(n =>
-    `<span class="chip ${poses[n] ? 'ok' : 'warn'}" data-n="${n}">${poses[n] ? '✓' : '○'} ${n}</span>`).join('');
-  for (const c of $('need').children) c.onclick = () => { $('poseName').value = c.dataset.n; };
-
-  const names = Object.keys(poses);
-  if (!names.length) { $('poseTable').innerHTML = '<div class="empty">저장된 자세가 없습니다.</div>'; return; }
-  const label = ch => (channels.find(c => c.ch === ch) || {name: ch}).name;
+  const {poses, pose_names, arm_channels} = st;
   $('poseTable').innerHTML = `<table>
-    <tr><th>이름</th>${arm_channels.map(ch => `<th>${label(ch)}</th>`).join('')}<th></th></tr>
-    ${names.map(n => `<tr><td>${n}</td>${arm_channels.map(ch => `<td>${poses[n][ch] ?? '—'}</td>`).join('')}
-      <td class="act"><button data-a="go" data-n="${n}">이동</button> <button class="danger" data-a="delete" data-n="${n}">삭제</button></td></tr>`).join('')}
+    <tr><th></th><th>이름</th>${arm_channels.map(ch => `<th>${chLabel(ch)}</th>`).join('')}<th></th></tr>
+    ${pose_names.map(n => `<tr><td>${savedMark(poses[n])}</td><td>${n}<br><small>${LABEL[n] || ''}</small></td>${armCells(poses[n])}
+      <td class="act"><button data-a="save" data-n="${n}">저장</button> <button data-a="go" data-n="${n}" data-empty="${poses[n] ? 0 : 1}">이동</button></td></tr>`).join('')}
   </table>`;
-  for (const b of $('poseTable').querySelectorAll('button')) b.onclick = () => poseAction(b.dataset.a, b.dataset.n);
+  for (const b of $('poseTable').querySelectorAll('button')) b.onclick = async () => {
+    const {a, n} = b.dataset;
+    if (a === 'save' && st.poses[n] && !confirm(`'${n}' 을(를) 지금 자세로 덮어쓸까요?`)) return;
+    try { await post('/api/pose/' + a, {name: n}); toast(a === 'save' ? `'${n}' 저장` : `'${n}' 로 이동`); refresh(); }
+    catch (e) { toast(e.message); }
+  };
 }
 
-// ---- QR 보정 ----
-function renderAlign() {
-  const {poses, refs, pose_names} = st;
-  const views = pose_names.filter(n => n.endsWith('_view'));
-  const target = n => n.replace('_view', '');
-  $('alignTable').innerHTML = `<table>
-    <tr><th>보는 자세</th><th>QR 기준</th><th>게인 (px/°)</th><th>집는 자세</th><th></th></tr>
-    ${views.map(n => {
-      const r = refs[n];
-      const ref = r ? `<span class="ok-t">${r.text}</span> (${r.cx.toFixed(0)}, ${r.cy.toFixed(0)})` : '<span class="no-t">없음</span>';
-      const gain = r ? Object.entries(r.gain).map(([ch, g]) => `ch${ch} ${g.toFixed(1)}`).join(' ') : '—';
-      const tgt = poses[target(n)] ? `<span class="ok-t">✓ ${target(n)}</span>` : `<span class="no-t">○ ${target(n)}</span>`;
-      return `<tr><td>${n}</td><td>${ref}</td><td>${gain}</td><td>${tgt}</td>
-        <td class="act"><button data-al="teach" data-n="${n}">QR 기준 저장</button>
-        <button data-al="test" data-n="${n}" ${r ? '' : 'disabled'}>보정 시험</button></td></tr>`;
-    }).join('')}
+// ---- mode 별 위치 ----
+function renderModes() {
+  const {modes, mode_names, positions, lift, grips, order} = st;
+  const mode = modes.active, data = modes[mode];
+  $('runMode').textContent = mode;
+
+  $('modeBtns').querySelectorAll('button').forEach(b => b.remove());
+  for (const m of mode_names) {
+    const b = document.createElement('button');
+    b.textContent = m; b.classList.toggle('on', m === mode);
+    b.onclick = async () => { try { await post('/api/mode/active', {mode: m}); refresh(); } catch (e) { toast(e.message); } };
+    $('modeBtns').appendChild(b);
+  }
+
+  $('seq').innerHTML = Object.entries(order).map(([side, names]) =>
+    `<div><b>${side.toUpperCase()}</b> ${names.map(n => `<span class="${data[n] ? 'ok-t' : 'no-t'}">${n}</span>`).join(' → ')}</div>`).join('');
+
+  const row = (n, cells, what) => `<tr><td>${savedMark(data[n])}</td><td>${n}<br><small>${LABEL[n]}</small></td>${cells}
+      <td class="act"><button data-m="save" data-n="${n}">${what}</button> <button data-m="go" data-n="${n}" data-empty="${data[n] != null ? 0 : 1}">이동</button></td></tr>`;
+  const span = st.arm_channels.length;
+  $('modeTable').innerHTML = `<table>
+    <tr><th></th><th>${mode}</th>${st.arm_channels.map(ch => `<th>${chLabel(ch)}</th>`).join('')}<th></th></tr>
+    ${[...positions, lift].map(n => row(n, armCells(data[n]), '저장')).join('')}
+    ${grips.map(n => row(n, `<td colspan="${span}">${data[n] ?? '—'}°</td>`, '집게 각도 저장')).join('')}
   </table>`;
-  for (const b of $('alignTable').querySelectorAll('button')) b.onclick = async () => {
-    const {al, n} = b.dataset;
-    if (al === 'teach' && !confirm(`지금 팔 자세를 '${n}' 로 저장하고 QR 기준을 잽니다 (팔 좌우가 4° 움직였다가 돌아옴). 진행할까요?`)) return;
-    try { await post('/api/align/' + al, {name: n}); toast(al === 'teach' ? '기준 저장 중… 아래 진행 기록 확인' : '보정 시험 중… 진행 기록 확인'); }
+  for (const b of $('modeTable').querySelectorAll('button')) b.onclick = async () => {
+    const {m, n} = b.dataset;
+    if (m === 'save' && data[n] != null && !confirm(`${mode} 의 '${n}' 을(를) 지금 각도로 덮어쓸까요?`)) return;
+    try { await post('/api/mode/' + m, {mode, name: n}); toast(m === 'save' ? `${mode} ${n} 저장` : `${n} 로 이동`); refresh(); }
     catch (e) { toast(e.message); }
   };
 }
@@ -304,7 +300,7 @@ for (const b of document.querySelectorAll('[data-run]')) {
     if (run === 'full' && !confirm('main 을 처음부터 실행합니다. 바퀴가 움직입니다. 로봇이 출발선에 있나요?')) return;
     if (run === 'arm' && !confirm(`${b.dataset.side.toUpperCase()} 로 정하고 팔 미션만 실행합니다. 로봇이 정지선에 있나요?`)) return;
     try {
-      await post('/api/mission/' + run, {side: b.dataset.side, align: $('useAlign').checked});
+      await post('/api/mission/' + run, {side: b.dataset.side});
       toast(run === 'stop' ? '정지 요청' : '미션 시작');
       refresh();
     } catch (e) { toast(e.message); }
@@ -320,10 +316,9 @@ function renderMission(m) {
   $('mErr').textContent = m.error ? '오류: ' + m.error : '';
   const esc = x => String(x).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
   $('mLog').innerHTML = m.log.slice().reverse().map(([t, msg]) => `<li>${t} <b>${esc(msg)}</b></li>`).join('');
-  for (const b of document.querySelectorAll('[data-run]:not([data-run=stop]), .servo button, .servo input, #saveBtn, #poseTable button, #alignTable button[data-al=teach]'))
-    b.disabled = m.running;
-  for (const b of document.querySelectorAll('#alignTable button[data-al=test]'))
-    b.disabled = m.running || !st.refs[b.dataset.n];
+  // 미션 중에는 수동 조작 막기. 저장 안 된 위치의 '이동' 은 항상 막기
+  for (const b of document.querySelectorAll('[data-run]:not([data-run=stop]), .servo button, .servo input, #modeBtns button, #poseTable button, #modeTable button'))
+    b.disabled = m.running || b.dataset.empty === '1';
 }
 
 // ---- 상태 갱신 ----
@@ -355,11 +350,8 @@ async function refresh() {
   $('camErr').style.display = s.camera_error ? 'flex' : 'none';
   $('camErr').textContent = s.camera_error;
 
-  const g = s.grip;
-  $('gripHint').textContent = `집게 각도 (arm.py): 열림 ${g.open ?? '미설정'} / 닫힘 ${g.close ?? '미설정'} — 집게 행에서 각도를 찾아 arm.py 에 적어 주세요.`;
-
-  const key = JSON.stringify([s.poses, s.refs]);
-  if (key !== poseKey) { poseKey = key; renderPoses(); renderAlign(); }
+  const key = JSON.stringify([s.poses, s.modes]);
+  if (key !== poseKey) { poseKey = key; renderPoses(); renderModes(); }
   renderMission(s.mission);
 }
 refresh();

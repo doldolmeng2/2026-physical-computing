@@ -52,8 +52,8 @@ python3 tests/test_arm.py
 |---|---|
 | 채널 1~4가 각각 어느 부위인지 (`1 +20`, `1 -20` …) | `hw.py` 의 `SERVO_ARM_ROT` ~ `SERVO_GRIP` |
 | 각 채널이 기구 끝에 걸리는 각도 (소리 나기 직전) | 자세 저장할 때 그 안쪽으로 |
-| 집게가 열리는 각도 / 물체를 잡는 각도 (`4 <각도>`) | `arm.py` 의 `GRIP_OPEN`, `GRIP_CLOSE` |
-| 미션 자세 6개 | `poses.json` (저장 순서는 ../README.md 4절) |
+| 집게가 열리는 각도 / 물체를 잡는 각도 (`4 <각도>`) | 웹 페이지에서 mode 별 `grip_open`, `grip_close` 로 저장 |
+| 공통 자세 `drive`, `qr` | `poses.json` (mode 별 위치 4곳 + lift 는 웹 페이지에서, ../README.md 4절) |
 
 팁: 처음에는 `+5` 처럼 조금씩. 서보가 "지잉" 하고 버티면 바로 반대로 돌린다.
 
@@ -107,7 +107,7 @@ python3 tests/test_motor.py
 | `M1_DIR` / `M2_DIR` | | |
 | `STEER_CENTER` | | |
 | 서보 채널 1~4 부위 | | |
-| `GRIP_OPEN` / `GRIP_CLOSE` | | |
+| 집게 열림 / 닫힘 (mode1, mode2) | | |
 | QR 글자 | | |
 | 정지선에서 초음파 값 | | |
 | 속도 3단계 / `DISTANCE_OFFSET_CM` / `BRAKE_ADVANCE_CM` | | |

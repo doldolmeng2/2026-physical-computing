@@ -1,5 +1,6 @@
-"""팔 자세 저장 + 미션 디버깅 웹 페이지
-카메라 화면, 인식 중인 QR, 서보 버튼, 자세 저장/불러오기,
+"""팔 위치 저장 + 미션 디버깅 웹 페이지
+카메라 화면, 인식 중인 QR, 서보 버튼, 공통 자세(drive, qr) 저장,
+mode 선택 + mode 별 위치 4곳·lift·집게 각도 저장 (sequence.py),
 미션 실행 (main 처음부터 / LEFT·RIGHT 강제 후 팔만), 진행 단계 표시, 정지 버튼
 
 mission 폴더에서 실행:  python3 webui/app.py
@@ -14,13 +15,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # mission 폴�
 
 import cv2
 from flask import Flask, Response, jsonify, request, send_file
+from werkzeug.exceptions import HTTPException
 
-import align
 import arm
 import display
 import hw
 import main as mission
 import qr
+import sequence
 import status
 
 PORT = 5002
@@ -83,7 +85,7 @@ class CameraWorker:
             self.jpg = jpg.tobytes()
 
     def look(self, timeout=2.0):
-        """부른 뒤에 읽은 프레임의 QR 결과 (align.py 가 팔을 멈춘 뒤 화면을 볼 때 쓴다)"""
+        """부른 뒤에 읽은 프레임의 QR 결과 (QR 을 기다릴 때 쓴다)"""
         t0 = time.time()
         while time.time() - t0 < timeout:
             if self.det_time > t0:
@@ -171,8 +173,12 @@ def state():
         distance_error=distance.error,
         poses=arm.load_poses(),
         pose_names=arm.POSE_NAMES,
-        refs=align.load_refs(),
-        grip={'open': arm.GRIP_OPEN, 'close': arm.GRIP_CLOSE},
+        modes=sequence.load(),
+        mode_names=sequence.MODES,
+        positions=sequence.POSITIONS,
+        lift=sequence.LIFT,
+        grips=sequence.GRIPS,
+        order=sequence.ORDER,
         mission=status.snapshot(),
     )
 
@@ -185,50 +191,49 @@ def mission_control(kind):
         return jsonify(ok=True)
     if mission_running():
         return jsonify(ok=False, error='미션이 이미 실행 중입니다'), 409
-    data = request.get_json(silent=True) or {}
-    look = camera.look if data.get('align', True) else None   # False 면 QR 보정 없이 저장 각도 그대로
+    mode = sequence.active_mode()   # 웹에서 고른 mode
     if kind == 'full':
-        start_mission(mission.run_full, wait_qr_from_camera, look)
+        start_mission(mission.run_full, wait_qr_from_camera, mode)
     elif kind == 'arm':
-        side = data.get('side')
+        side = (request.get_json(silent=True) or {}).get('side')
         if side not in ('left', 'right'):
             return jsonify(ok=False, error='side 는 left / right'), 400
-        start_mission(mission.run_arm_only, side, look)
+        start_mission(mission.run_arm_only, side, mode)
     else:
         return jsonify(ok=False, error='알 수 없는 모드'), 404
     return jsonify(ok=True)
 
 
-@app.route('/api/align/<action>', methods=['POST'])
-def align_control(action):
-    """teach: 지금 자세 + 보이는 QR 을 기준으로 저장 / test: 그 view 자세에서 보정만 해 보기"""
-    if mission_running():
-        return jsonify(ok=False, error='미션이 실행 중입니다'), 409
-    name = request.get_json()['name']
-    if name not in [n for n in arm.POSE_NAMES if n.endswith('_view')]:
-        return jsonify(ok=False, error='view 자세 이름이 아닙니다'), 400
-
-    def teach():
-        status.step('ALIGN TEACH', name)
-        ref = align.teach(name, camera.look)
-        gains = ' '.join(f'ch{ch} {g:+.1f}px/deg' for ch, g in ref['gain'].items())
-        status.detail(f'ref ({ref["cx"]:.0f},{ref["cy"]:.0f}) {gains}')
-
-    def test():
-        status.step('ALIGN TEST', name)
-        offset = align.correct(name, camera.look)
-        status.detail(f'offset {offset or "none"}')
-
-    if action not in ('teach', 'test'):
-        return jsonify(ok=False, error='알 수 없는 동작'), 404
-    start_mission(mission.run_task, 'ALIGN', '', teach if action == 'teach' else test)
+@app.route('/api/mode/<action>', methods=['POST'])
+def mode_control(action):
+    """active: 사용할 mode 고르기 / save: 지금 각도를 mode 의 위치로 저장 / go: 그 위치로 이동"""
+    data = request.get_json()
+    mode = data['mode']
+    with servo_lock:
+        if action == 'active':
+            sequence.set_active(mode)
+        elif action == 'save':
+            sequence.save(mode, data['name'])
+        elif action == 'go':
+            sequence.go(mode, data['name'])
+        else:
+            return jsonify(ok=False, error='알 수 없는 동작'), 404
     return jsonify(ok=True)
+
+
+@app.errorhandler(Exception)
+def api_error(e):
+    """저장 안 된 위치로 이동 등 → 화면에 오류 문구로 보여준다."""
+    if isinstance(e, HTTPException):   # 404 같은 건 그대로
+        return e
+    return jsonify(ok=False, error=str(e)), 400
 
 
 @app.before_request
 def block_manual_while_running():
-    """미션 중에는 서보 버튼·자세 저장을 막는다 (서로 같은 서보를 움직이지 않게)."""
-    if request.method == 'POST' and request.path.startswith(('/api/servo', '/api/pose')) and mission_running():
+    """미션 중에는 서보 버튼·위치 저장을 막는다 (서로 같은 서보를 움직이지 않게)."""
+    if (request.method == 'POST' and mission_running()
+            and request.path.startswith(('/api/servo', '/api/pose', '/api/mode'))):
         return jsonify(ok=False, error='미션 실행 중에는 수동 조작을 할 수 없습니다'), 409
 
 
@@ -260,7 +265,6 @@ def pose(action):
             arm.go_pose(name)
         elif action == 'delete':
             arm.delete_pose(name)
-            align.delete_ref(name)
         else:
             return jsonify(ok=False, error='알 수 없는 동작'), 404
     return jsonify(ok=True)

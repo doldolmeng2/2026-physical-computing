@@ -2,6 +2,8 @@
 
 핀/채널 값은 Adeept_PiCar-Pro/Server 의 Move.py, RPIservo.py, Ultra.py 와 같다.
 """
+import glob
+import os
 import subprocess
 import time
 
@@ -37,7 +39,9 @@ ULTRA_TRIG = 23
 ULTRA_ECHO = 24
 
 # ---- 카메라 (로봇팔 끝 USB 웹캠) ----
-CAMERA_INDEX = 0
+# None 이면 USB 웹캠을 자동으로 찾는다. USB 를 다시 꽂으면 /dev/video0 → video1 처럼 번호가 바뀌기 때문.
+# 특정 장치를 쓰려면 번호(0) 나 경로('/dev/video1') 를 적는다.
+CAMERA_INDEX = None
 CAMERA_SIZE = (640, 480)
 
 _pca = None
@@ -163,12 +167,21 @@ def distance_median(n=5, gap=0.02):
 
 
 # ---------------- 카메라 ----------------
+def find_usb_camera():
+    """USB 웹캠의 영상 장치 경로 (/dev/v4l/by-id/usb-...-video-index0). 없으면 None"""
+    found = sorted(glob.glob('/dev/v4l/by-id/usb-*-video-index0'))
+    return os.path.realpath(found[0]) if found else None
+
+
 def open_camera():
-    cap = cv2.VideoCapture(CAMERA_INDEX)
+    source = CAMERA_INDEX if CAMERA_INDEX is not None else find_usb_camera()
+    if source is None:
+        raise RuntimeError('USB 웹캠을 찾을 수 없습니다 (USB 연결 확인, ls /dev/v4l/by-id)')
+    cap = cv2.VideoCapture(source, cv2.CAP_V4L2)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_SIZE[0])
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_SIZE[1])
     if not cap.isOpened():
-        raise RuntimeError('카메라를 열 수 없습니다 (USB 연결, 다른 프로그램 사용 여부 확인)')
+        raise RuntimeError(f'카메라({source})를 열 수 없습니다 (USB 연결, 다른 프로그램 사용 여부 확인)')
     return cap
 
 

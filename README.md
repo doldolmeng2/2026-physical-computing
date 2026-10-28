@@ -59,7 +59,7 @@ python3 main.py               # 전체 미션
 | `STEER_CENTER` | 앞바퀴가 정면을 볼 때 조향 서보 각도 (0~180) | `90` | `test_motor.py` 에서 `sa 85`, `sa 95` … 로 바꿔가며 `f 30 2` 로 똑바로 가는 값 |
 | `SERVO_STEER` ~ `SERVO_GRIP` | PCA9685 채널 번호 (0 조향, 1 팔 좌우, 2 팔 상하, 3 손목, 4 집게) | Adeept 기준 | `test_arm.py` 에서 채널별로 움직여 보고 실제 부위와 다르면 번호를 바꾼다 |
 | `ULTRA_TRIG`, `ULTRA_ECHO` | 초음파 Trig/Echo GPIO 번호 (BCM) | `23`, `24` | Adeept 코드 값. 바꿀 일 없음 |
-| `CAMERA_INDEX` | 웹캠 번호 (`/dev/video0` → 0) | `0` | 카메라가 안 열리면 `ls /dev/video*` 로 확인 |
+| `CAMERA_INDEX` | 웹캠. `None` 이면 USB 웹캠 자동 찾기 (USB 를 다시 꽂으면 `/dev/video0` → `video1` 처럼 번호가 바뀜) | `None` | 그래도 안 열리면 `ls -l /dev/v4l/by-id` 로 확인 후 번호나 경로(`'/dev/video1'`)를 적는다 |
 | `CAMERA_SIZE` | 카메라 해상도 | `(640, 480)` | QR이 잘 안 읽히면 키워 볼 수 있음 (느려짐) |
 
 ### arm.py / sequence.py
@@ -305,7 +305,7 @@ python3
 | 증상 | 확인할 것 |
 |---|---|
 | `[경고] Adeept 웹 컨트롤러가 실행 중` | `sudo systemctl stop Adeept_Robot.service` |
-| `카메라를 열 수 없습니다` | 웹 컨트롤러가 웹캠을 쓰는 중인지, `ls /dev/video*`, USB 연결 |
+| `카메라를 열 수 없습니다` / `USB 웹캠을 찾을 수 없습니다` | 웹 컨트롤러가 웹캠을 쓰는 중인지, `ls -l /dev/v4l/by-id`, USB 연결 |
 | `No I2C device at address: 0x5f` | Robot HAT 전원(배터리 스위치), HAT 연결 |
 | `GPIO busy` / pin in use | 다른 프로그램이 초음파 핀을 쓰는 중 (웹 컨트롤러, 다른 테스트) |
 | 초음파가 계속 200cm | 측정 범위(2m) 밖이거나 앞에 아무것도 없음, 배선 |

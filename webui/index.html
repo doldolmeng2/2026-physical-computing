@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PiCar 팔 자세</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #fff; --text: #1d2330; --muted: #6b7280; --line: #e3e6eb;
+    --accent: #2563eb; --accent-soft: #e8efff; --ok: #15803d; --ok-soft: #e3f5e8;
+    --warn: #b45309; --warn-soft: #fdf1df; --bad: #b91c1c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --card: #1b2029; --text: #e6e9ef; --muted: #9aa3b2; --line: #2b323e;
+      --accent: #6b9bff; --accent-soft: #1f2a42; --ok: #4ade80; --ok-soft: #173023;
+      --warn: #fbbf24; --warn-soft: #3a2e14; --bad: #f87171;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.45 system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+           padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--card); }
+  header h1 { font-size: 17px; margin: 0 auto 0 0; }
+  .chip { padding: 4px 10px; border-radius: 999px; background: var(--bg); color: var(--muted);
+          font-weight: 600; font-variant-numeric: tabular-nums; }
+  .chip.ok { background: var(--ok-soft); color: var(--ok); }
+  .chip.warn { background: var(--warn-soft); color: var(--warn); }
+  main { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 16px;
+         padding: 16px; max-width: 1400px; margin: 0 auto; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+  .card + .card { margin-top: 16px; }
+  h2 { font-size: 14px; margin: 0 0 10px; color: var(--muted); font-weight: 600; }
+  .video { position: relative; background: #000; border-radius: 8px; overflow: hidden; aspect-ratio: 4 / 3; }
+  .video img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .video .err { position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+                color: #fff; padding: 20px; text-align: center; }
+  .qr { margin-top: 12px; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .qr .label { color: var(--muted); }
+  .qr .value { font-size: 28px; font-weight: 700; letter-spacing: .02em; }
+  .qr .value.live { color: var(--ok); }
+  .qr .value.old { color: var(--muted); }
+  .steps { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+  .steps span { color: var(--muted); margin-right: 4px; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--bg); color: var(--text);
+           border-radius: 8px; padding: 7px 12px; cursor: pointer; touch-action: manipulation; user-select: none; }
+  button:hover { border-color: var(--accent); }
+  button:active { transform: translateY(1px); }
+  button.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button.danger { color: var(--bad); }
+  .servo { display: grid; grid-template-columns: 82px 52px 1fr auto; align-items: center; gap: 10px;
+           padding: 10px 0; border-top: 1px solid var(--line); }
+  .servo .name { font-weight: 600; }
+  .servo .name small { display: block; color: var(--muted); font-weight: 400; }
+  .servo .angle { font-size: 22px; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
+  .servo input[type=range] { width: 100%; accent-color: var(--accent); }
+  .servo .btns { display: flex; gap: 6px; }
+  .servo .btns button { min-width: 44px; font-weight: 700; }
+  @media (max-width: 520px) {
+    .servo { grid-template-columns: 70px 46px 1fr; }
+    .servo .btns { grid-column: 1 / -1; justify-content: flex-end; }
+  }
+  .hint { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
+  .save { display: flex; gap: 8px; }
+  .save input { flex: 1; min-width: 0; font: inherit; padding: 7px 10px; border-radius: 8px;
+                border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+  .need { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 4px; }
+  .need .chip { cursor: pointer; }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 7px 6px; border-top: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 600; font-size: 13px; }
+  td.act { text-align: right; white-space: nowrap; }
+  td.act button { padding: 4px 10px; }
+  .empty { color: var(--muted); padding: 10px 0 0; }
+  #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); padding: 10px 16px;
+           border-radius: 10px; background: var(--text); color: var(--bg); opacity: 0; transition: opacity .2s;
+           pointer-events: none; max-width: calc(100% - 32px); }
+  #toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<header>
+  <h1>PiCar 팔 자세 설정</h1>
+  <span class="chip" id="distChip">초음파 —</span>
+  <span class="chip" id="qrChip">QR 없음</span>
+</header>
+
+<main>
+  <section>
+    <div class="card">
+      <h2>카메라</h2>
+      <div class="video">
+        <img src="/video" alt="웹캠 화면">
+        <div class="err" id="camErr"></div>
+      </div>
+      <div class="qr">
+        <span class="label">인식된 QR</span>
+        <span class="value old" id="qrText">—</span>
+        <span class="label" id="qrAge"></span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="card">
+      <h2>서보 각도</h2>
+      <div class="steps" id="steps"><span>한 번에</span></div>
+      <div id="servos"></div>
+      <p class="hint">버튼을 누르고 있으면 계속 움직입니다. 서보가 "지잉" 하고 버티면 바로 반대로 돌리세요.</p>
+      <p class="hint" id="gripHint"></p>
+    </div>
+
+    <div class="card">
+      <h2>자세 저장 (팔 좌우·상하·손목)</h2>
+      <div class="save">
+        <input id="poseName" list="poseNames" placeholder="자세 이름 (예: left_pick)">
+        <datalist id="poseNames"></datalist>
+        <button class="primary" id="saveBtn">현재 자세 저장</button>
+      </div>
+      <div class="need" id="need"></div>
+      <div id="poseTable"></div>
+    </div>
+  </section>
+</main>
+<div id="toast"></div>
+
+<script>
+const STEPS = [1, 2, 5, 10];
+let step = 5;
+let st = null;
+let dragging = null;
+const $ = id => document.getElementById(id);
+
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(toast.timer); toast.timer = setTimeout(() => t.classList.remove('show'), 1800);
+}
+
+async function post(url, body) {
+  const r = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok || data.ok === false) throw new Error(data.error || r.statusText);
+  return data;
+}
+
+// ---- 한 번에 움직일 각도 ----
+for (const s of STEPS) {
+  const b = document.createElement('button');
+  b.textContent = s + '°';
+  b.onclick = () => { step = s; renderSteps(); };
+  b.dataset.step = s;
+  $('steps').appendChild(b);
+}
+function renderSteps() {
+  for (const b of $('steps').querySelectorAll('button')) b.classList.toggle('on', +b.dataset.step === step);
+}
+renderSteps();
+
+// ---- 서보 행 ----
+function buildServos(channels) {
+  const box = $('servos');
+  for (const {ch, name} of channels) {
+    const row = document.createElement('div');
+    row.className = 'servo';
+    row.innerHTML = `
+      <div class="name">${name}<small>채널 ${ch}</small></div>
+      <div class="angle" id="a${ch}">?</div>
+      <input type="range" min="0" max="180" value="90" id="r${ch}">
+      <div class="btns"><button data-d="-1">−</button><button data-d="1">+</button></div>`;
+    box.appendChild(row);
+    const range = row.querySelector('input');
+    range.oninput = () => { dragging = ch; $('a' + ch).textContent = range.value; };
+    range.onchange = async () => {
+      try { await post('/api/servo', {ch, angle: +range.value}); } catch (e) { toast(e.message); }
+      dragging = null; refresh();
+    };
+    for (const b of row.querySelectorAll('button')) holdRepeat(b, ch, +b.dataset.d);
+  }
+}
+
+function holdRepeat(btn, ch, dir) {
+  let held = false;
+  const once = async () => {
+    try {
+      const r = await post('/api/servo', {ch, delta: dir * step});
+      $('a' + ch).textContent = r.angle; $('r' + ch).value = r.angle;
+    } catch (e) { toast(e.message); held = false; }
+  };
+  const loop = async () => { while (held) { await once(); await new Promise(r => setTimeout(r, 120)); } };
+  btn.addEventListener('pointerdown', e => { e.preventDefault(); if (!held) { held = true; loop(); } });
+  for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) btn.addEventListener(ev, () => { held = false; });
+}
+
+// ---- 자세 ----
+$('saveBtn').onclick = async () => {
+  const name = $('poseName').value.trim();
+  if (!name) return toast('자세 이름을 입력하세요');
+  if (st && st.poses[name] && !confirm(`'${name}' 을(를) 지금 자세로 덮어쓸까요?`)) return;
+  try { await post('/api/pose/save', {name}); toast(`'${name}' 저장`); refresh(); }
+  catch (e) { toast(e.message); }
+};
+
+async function poseAction(action, name) {
+  if (action === 'delete' && !confirm(`'${name}' 을(를) 지울까요?`)) return;
+  try { await post('/api/pose/' + action, {name}); toast(action === 'go' ? `'${name}' 로 이동` : `'${name}' 삭제`); refresh(); }
+  catch (e) { toast(e.message); }
+}
+
+function renderPoses() {
+  const {poses, pose_names, arm_channels, channels} = st;
+  $('poseNames').innerHTML = pose_names.map(n => `<option value="${n}">`).join('');
+  $('need').innerHTML = pose_names.map(n =>
+    `<span class="chip ${poses[n] ? 'ok' : 'warn'}" data-n="${n}">${poses[n] ? '✓' : '○'} ${n}</span>`).join('');
+  for (const c of $('need').children) c.onclick = () => { $('poseName').value = c.dataset.n; };
+
+  const names = Object.keys(poses);
+  if (!names.length) { $('poseTable').innerHTML = '<div class="empty">저장된 자세가 없습니다.</div>'; return; }
+  const label = ch => (channels.find(c => c.ch === ch) || {name: ch}).name;
+  $('poseTable').innerHTML = `<table>
+    <tr><th>이름</th>${arm_channels.map(ch => `<th>${label(ch)}</th>`).join('')}<th></th></tr>
+    ${names.map(n => `<tr><td>${n}</td>${arm_channels.map(ch => `<td>${poses[n][ch] ?? '—'}</td>`).join('')}
+      <td class="act"><button data-a="go" data-n="${n}">이동</button> <button class="danger" data-a="delete" data-n="${n}">삭제</button></td></tr>`).join('')}
+  </table>`;
+  for (const b of $('poseTable').querySelectorAll('button')) b.onclick = () => poseAction(b.dataset.a, b.dataset.n);
+}
+
+// ---- 상태 갱신 ----
+let poseKey = '';
+async function refresh() {
+  let s;
+  try { s = await (await fetch('/api/state')).json(); } catch { return; }
+  if (!st) buildServos(s.channels);
+  st = s;
+
+  for (const {ch} of s.channels) {
+    if (dragging === ch) continue;
+    const a = s.angles[ch];
+    $('a' + ch).textContent = a ?? '?';
+    if (a != null) $('r' + ch).value = a;
+  }
+
+  const q = s.qr;
+  $('qrText').textContent = q.text || '—';
+  $('qrText').className = 'value ' + (q.live ? 'live' : 'old');
+  $('qrAge').textContent = q.live ? '지금 인식 중' : (q.age != null ? `${q.age.toFixed(0)}초 전` : '');
+  $('qrChip').textContent = q.live ? 'QR ' + q.text : 'QR 없음';
+  $('qrChip').className = 'chip ' + (q.live ? 'ok' : '');
+
+  $('distChip').textContent = s.distance != null ? `초음파 ${s.distance.toFixed(1)} cm` : '초음파 —';
+  $('distChip').className = 'chip ' + (s.distance != null ? '' : 'warn');
+  $('distChip').title = s.distance_error || '';
+
+  $('camErr').style.display = s.camera_error ? 'flex' : 'none';
+  $('camErr').textContent = s.camera_error;
+
+  const g = s.grip;
+  $('gripHint').textContent = `집게 각도 (arm.py): 열림 ${g.open ?? '미설정'} / 닫힘 ${g.close ?? '미설정'} — 집게 행에서 각도를 찾아 arm.py 에 적어 주세요.`;
+
+  const key = JSON.stringify(s.poses);
+  if (key !== poseKey) { poseKey = key; renderPoses(); }
+}
+refresh();
+setInterval(refresh, 300);
+</script>
+</body>
+</html>

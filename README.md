@@ -15,7 +15,8 @@
 | `arm.py` | 팔 자세 저장/이동, 집게, 집기(`pick`)/놓기(`place`) |
 | `drive.py` | 직진하다가 정지선에서 정지 |
 | `main.py` | 미션 1~5 순서대로 실행 |
-| `poses.json` | 저장한 팔 자세 (`tests/test_arm.py` 로 Pi에서 만든다) |
+| `poses.json` | 저장한 팔 자세 (`webui` 나 `tests/test_arm.py` 로 Pi에서 만든다) |
+| `webui/` | 카메라·QR·초음파를 보면서 버튼으로 팔을 움직이고 자세를 저장하는 웹 페이지 (4절) |
 | `tests/` | 장치를 하나씩 확인하는 테스트 → [tests/README.md](tests/README.md) |
 
 ---
@@ -140,7 +141,29 @@ python3 -m unittest discover -s tests -p '*_logic.py'
 
 pick/place 자세는 **로봇을 실제 정지선 위치에 두고** 저장해야 한다 (정지 후에는 바퀴를 못 움직임).
 
-### 순서
+### 방법 A: 웹 페이지 (추천)
+카메라 화면과 인식 중인 QR, 초음파 거리를 보면서 버튼으로 팔을 움직이고 저장한다.
+1. Pi에서 실행
+   ```bash
+   sudo systemctl stop Adeept_Robot.service
+   cd ~/picar_mission && git pull
+   python3 webui/app.py
+   ```
+2. PC 브라우저에서 **`http://192.168.50.2:5002`** 접속. 시작하면 팔·집게가 90°, 조향이 가운데로 간다.
+3. **서보 각도** 카드
+   - `1° 2° 5° 10°` 로 한 번에 움직일 각도를 고른다
+   - `−` / `+` 버튼: 한 번 누르면 한 칸, **누르고 있으면 계속** 움직인다
+   - 슬라이더: 끌어서 놓으면 그 각도로 천천히 이동
+4. **자세 저장** 카드
+   - 아래 칩(`○ left_pick` 등)을 누르면 이름 칸에 들어간다. ✓ 는 이미 저장된 자세
+   - **현재 자세 저장** → `poses.json` 에 팔 좌우·상하·손목 각도 저장 (같은 이름은 덮어쓰기 확인)
+   - 표의 **이동** 으로 다시 불러와 같은 위치로 오는지 확인, **삭제** 로 지우기
+5. 집게는 자세에 저장되지 않는다. 집게 행에서 열림/닫힘 각도를 찾아 `arm.py` 의 `GRIP_OPEN`, `GRIP_CLOSE` 에 직접 적는다.
+6. Ctrl+C 로 끄고 `poses.json` 을 push (아래 방법 B 의 5번)
+
+이 페이지가 켜져 있는 동안은 카메라·초음파·서보를 쓰는 다른 프로그램(`tests/`, `main.py`)을 같이 실행하지 않는다.
+
+### 방법 B: 터미널 (`tests/test_arm.py`)
 1. Pi에서 웹 컨트롤러를 끄고 테스트 실행
    ```bash
    sudo systemctl stop Adeept_Robot.service

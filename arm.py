@@ -28,6 +28,12 @@ def save_pose(name, angles):
     POSE_FILE.write_text(json.dumps(poses, indent=2))
 
 
+def delete_pose(name):
+    poses = load_poses()
+    poses.pop(name, None)
+    POSE_FILE.write_text(json.dumps(poses, indent=2))
+
+
 def move_to(angles, step=2, delay=0.02):
     """{채널: 각도} 로 조금씩 이동. 처음(현재 각도 모름)이면 바로 이동"""
     while True:

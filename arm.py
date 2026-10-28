@@ -9,7 +9,9 @@ POSE_FILE = Path(__file__).with_name('poses.json')
 
 # 미션에서 쓰는 자세 이름. test_arm.py 의 save 명령으로 각도를 저장한다.
 # TODO: 실제 로봇으로 각 자세 각도 저장 (필요하면 자세 추가)
-POSE_NAMES = ['drive', 'qr', 'left_pick', 'left_place', 'right_pick', 'right_place']
+POSE_NAMES = ['drive', 'qr', 'left_pick', 'left_place', 'right_pick', 'right_place',
+              # QR 보정용 '보는 자세' (웹의 [QR 기준 저장] 으로 저장, align.py 참고)
+              'left_pick_view', 'left_place_view', 'right_pick_view', 'right_place_view']
 
 GRIP_OPEN = None    # TODO: test_arm.py 로 집게가 열리는 각도 확인
 GRIP_CLOSE = None   # TODO: 물체를 놓치지 않고 잡는 각도 확인 (너무 세게 닫지 않기)
@@ -50,11 +52,15 @@ def move_to(angles, step=2, delay=0.02):
         time.sleep(delay)
 
 
-def go_pose(name):
+def go_pose(name, offset=None):
+    """offset: {채널: 더할 각도} (QR 보정 결과, align.correct)"""
     poses = load_poses()
     if name not in poses:
         raise KeyError(f"'{name}' 자세가 없습니다. test_arm.py 로 먼저 저장하세요")
-    move_to(poses[name])
+    angles = dict(poses[name])
+    for ch, d in (offset or {}).items():
+        angles[ch] = max(0, min(180, angles[ch] + d))
+    move_to(angles)
 
 
 def grip():
@@ -69,16 +75,16 @@ def release():
     move_to({hw.SERVO_GRIP: GRIP_OPEN})
 
 
-def pick(side):
-    """side: 'left' / 'right'
+def pick(side, offset=None):
+    """side: 'left' / 'right', offset: QR 보정 결과 (없으면 저장된 각도 그대로)
     TODO: 집는 순서 확인 (들어 올리는 중간 자세가 필요한지, 넘어뜨리지 않는지)
     """
     release()
-    go_pose(f'{side}_pick')
+    go_pose(f'{side}_pick', offset)
     grip()
 
 
-def place(side):
+def place(side, offset=None):
     """TODO: 놓는 순서 확인 (빈 칸 위치, 놓은 뒤 팔을 빼는 방향)"""
-    go_pose(f'{side}_place')
+    go_pose(f'{side}_place', offset)
     release()

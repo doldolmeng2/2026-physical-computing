@@ -45,6 +45,14 @@ def step(name, detail=''):
         _log(f'{name} {detail}'.strip())
 
 
+def detail(text):
+    """단계는 그대로 두고 세부 내용만 바꾼다."""
+    check_abort()
+    with _lock:
+        _state['detail'] = text
+        _log(f'{_state["step"]} {text}')
+
+
 def finish(error=''):
     with _lock:
         _state.update(running=False, error=error, step='ERROR' if error else 'DONE')

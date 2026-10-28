@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # mission 폴�
 import cv2
 from flask import Flask, Response, jsonify, request, send_file
 
+import align
 import arm
 import display
 import hw
@@ -43,7 +44,9 @@ class CameraWorker:
 
     def __init__(self):
         self.jpg = None
-        self.qr_text = ''
+        self.detections = []   # 마지막으로 QR 인식을 돌린 프레임의 결과 (qr.detect_all)
+        self.det_time = 0.0    # 그 프레임을 읽은 시각
+        self.qr_text = ''      # 마지막으로 본 QR 글자 (여러 개면 'PICK, PLACE')
         self.qr_time = 0.0
         self.error = ''
         threading.Thread(target=self._loop, daemon=True).start()
@@ -55,22 +58,38 @@ class CameraWorker:
             self.error = str(e)
             return
         n = 0
-        points = None
+        shown = []
         while True:
             ok, frame = cap.read()
             if not ok:
                 time.sleep(0.05)
                 continue
+            now = time.time()
             n += 1
             if n % QR_EVERY == 0:
-                text, points = qr.detect_qr(frame)
-                if text:
-                    self.qr_text, self.qr_time = text, time.time()
-            if points is not None and time.time() - self.qr_time < QR_HOLD_SEC:
-                cv2.polylines(frame, [points.astype(int).reshape(-1, 2)], True, (0, 255, 0), 3)
-                cv2.putText(frame, self.qr_text, (10, 35), cv2.FONT_HERSHEY_SIMPLEX, 1.1, (0, 255, 0), 3)
+                self.detections, self.det_time = qr.detect_all(frame), now
+                if self.detections:
+                    shown = self.detections
+                    self.qr_text = ', '.join(d['text'] for d in shown)
+                    self.qr_time = now
+            if now - self.qr_time < QR_HOLD_SEC:
+                for d in shown:
+                    cv2.polylines(frame, [d['points'].astype(int)], True, (0, 255, 0), 3)
+                    x, y = int(d['cx']), int(d['cy'])
+                    cv2.drawMarker(frame, (x, y), (0, 255, 0), cv2.MARKER_CROSS, 16, 2)
+                    cv2.putText(frame, d['text'], (x - 30, y - int(d['size'] / 2) - 10),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
             _, jpg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
             self.jpg = jpg.tobytes()
+
+    def look(self, timeout=2.0):
+        """부른 뒤에 읽은 프레임의 QR 결과 (align.py 가 팔을 멈춘 뒤 화면을 볼 때 쓴다)"""
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            if self.det_time > t0:
+                return list(self.detections)
+            time.sleep(0.02)
+        return []
 
 
 class DistanceWorker:
@@ -102,9 +121,9 @@ def wait_qr_from_camera(wanted=('LEFT', 'RIGHT')):
     started = time.time()
     while True:
         status.check_abort()
-        if camera.qr_time > started and camera.qr_text.upper() in wanted:
-            return camera.qr_text.upper()
-        time.sleep(0.05)
+        for d in camera.look():
+            if d['text'].upper() in wanted and camera.det_time > started:
+                return d['text'].upper()
 
 
 def mission_running():
@@ -152,6 +171,7 @@ def state():
         distance_error=distance.error,
         poses=arm.load_poses(),
         pose_names=arm.POSE_NAMES,
+        refs=align.load_refs(),
         grip={'open': arm.GRIP_OPEN, 'close': arm.GRIP_CLOSE},
         mission=status.snapshot(),
     )
@@ -165,15 +185,43 @@ def mission_control(kind):
         return jsonify(ok=True)
     if mission_running():
         return jsonify(ok=False, error='미션이 이미 실행 중입니다'), 409
+    data = request.get_json(silent=True) or {}
+    look = camera.look if data.get('align', True) else None   # False 면 QR 보정 없이 저장 각도 그대로
     if kind == 'full':
-        start_mission(mission.run_full, wait_qr_from_camera)
+        start_mission(mission.run_full, wait_qr_from_camera, look)
     elif kind == 'arm':
-        side = request.get_json()['side']
+        side = data.get('side')
         if side not in ('left', 'right'):
             return jsonify(ok=False, error='side 는 left / right'), 400
-        start_mission(mission.run_arm_only, side)
+        start_mission(mission.run_arm_only, side, look)
     else:
         return jsonify(ok=False, error='알 수 없는 모드'), 404
+    return jsonify(ok=True)
+
+
+@app.route('/api/align/<action>', methods=['POST'])
+def align_control(action):
+    """teach: 지금 자세 + 보이는 QR 을 기준으로 저장 / test: 그 view 자세에서 보정만 해 보기"""
+    if mission_running():
+        return jsonify(ok=False, error='미션이 실행 중입니다'), 409
+    name = request.get_json()['name']
+    if name not in [n for n in arm.POSE_NAMES if n.endswith('_view')]:
+        return jsonify(ok=False, error='view 자세 이름이 아닙니다'), 400
+
+    def teach():
+        status.step('ALIGN TEACH', name)
+        ref = align.teach(name, camera.look)
+        gains = ' '.join(f'ch{ch} {g:+.1f}px/deg' for ch, g in ref['gain'].items())
+        status.detail(f'ref ({ref["cx"]:.0f},{ref["cy"]:.0f}) {gains}')
+
+    def test():
+        status.step('ALIGN TEST', name)
+        offset = align.correct(name, camera.look)
+        status.detail(f'offset {offset or "none"}')
+
+    if action not in ('teach', 'test'):
+        return jsonify(ok=False, error='알 수 없는 동작'), 404
+    start_mission(mission.run_task, 'ALIGN', '', teach if action == 'teach' else test)
     return jsonify(ok=True)
 
 
@@ -212,6 +260,7 @@ def pose(action):
             arm.go_pose(name)
         elif action == 'delete':
             arm.delete_pose(name)
+            align.delete_ref(name)
         else:
             return jsonify(ok=False, error='알 수 없는 동작'), 404
     return jsonify(ok=True)

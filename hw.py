@@ -74,8 +74,13 @@ def _motor(channels):
     return _motors[channels]
 
 
+_estop = False   # True 면 drive() 가 항상 0 (웹 정지 버튼)
+
+
 def drive(speed):
     """speed: -100 ~ 100 (+ 앞으로, - 뒤로, 0 정지)"""
+    if _estop:
+        speed = 0
     speed = max(-100, min(100, speed)) / 100
     _motor(MOTOR_M1).throttle = speed * M1_DIR
     _motor(MOTOR_M2).throttle = speed * M2_DIR
@@ -83,6 +88,14 @@ def drive(speed):
 
 def stop():
     drive(0)
+
+
+def estop(on=True):
+    """비상 정지. on=True 동안은 drive() 를 불러도 바퀴가 돌지 않는다."""
+    global _estop
+    _estop = on
+    if on:
+        stop()
 
 
 # ---------------- 서보 ----------------

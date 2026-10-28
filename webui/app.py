@@ -1,4 +1,6 @@
-"""팔 자세 저장용 웹 페이지: 카메라 화면 + 인식 중인 QR + 서보 버튼 + 자세 저장/불러오기
+"""팔 자세 저장 + 미션 디버깅 웹 페이지
+카메라 화면, 인식 중인 QR, 서보 버튼, 자세 저장/불러오기,
+미션 실행 (main 처음부터 / LEFT·RIGHT 강제 후 팔만), 진행 단계 표시, 정지 버튼
 
 mission 폴더에서 실행:  python3 webui/app.py
 PC 브라우저에서:        http://192.168.50.2:5002
@@ -14,8 +16,11 @@ import cv2
 from flask import Flask, Response, jsonify, request, send_file
 
 import arm
+import display
 import hw
+import main as mission
 import qr
+import status
 
 PORT = 5002
 QR_EVERY = 2          # 몇 프레임마다 QR 인식할지 (Pi 부하 줄이기)
@@ -89,6 +94,34 @@ class DistanceWorker:
 
 camera = None
 distance = None
+mission_thread = None
+
+
+def wait_qr_from_camera(wanted=('LEFT', 'RIGHT')):
+    """미션 시작 뒤에 새로 인식된 LEFT/RIGHT 를 기다린다 (카메라는 CameraWorker 가 계속 읽음)."""
+    started = time.time()
+    while True:
+        status.check_abort()
+        if camera.qr_time > started and camera.qr_text.upper() in wanted:
+            return camera.qr_text.upper()
+        time.sleep(0.05)
+
+
+def mission_running():
+    return mission_thread is not None and mission_thread.is_alive()
+
+
+def start_mission(target, *args):
+    global mission_thread
+
+    def run():
+        try:
+            target(*args)
+        except Exception as e:   # 오류 내용은 status 에 기록됨
+            print('[미션 오류]', e)
+
+    mission_thread = threading.Thread(target=run, daemon=True)
+    mission_thread.start()
 
 
 @app.route('/')
@@ -120,7 +153,35 @@ def state():
         poses=arm.load_poses(),
         pose_names=arm.POSE_NAMES,
         grip={'open': arm.GRIP_OPEN, 'close': arm.GRIP_CLOSE},
+        mission=status.snapshot(),
     )
+
+
+@app.route('/api/mission/<kind>', methods=['POST'])
+def mission_control(kind):
+    if kind == 'stop':
+        status.request_abort()
+        hw.estop(True)
+        return jsonify(ok=True)
+    if mission_running():
+        return jsonify(ok=False, error='미션이 이미 실행 중입니다'), 409
+    if kind == 'full':
+        start_mission(mission.run_full, wait_qr_from_camera)
+    elif kind == 'arm':
+        side = request.get_json()['side']
+        if side not in ('left', 'right'):
+            return jsonify(ok=False, error='side 는 left / right'), 400
+        start_mission(mission.run_arm_only, side)
+    else:
+        return jsonify(ok=False, error='알 수 없는 모드'), 404
+    return jsonify(ok=True)
+
+
+@app.before_request
+def block_manual_while_running():
+    """미션 중에는 서보 버튼·자세 저장을 막는다 (서로 같은 서보를 움직이지 않게)."""
+    if request.method == 'POST' and request.path.startswith(('/api/servo', '/api/pose')) and mission_running():
+        return jsonify(ok=False, error='미션 실행 중에는 수동 조작을 할 수 없습니다'), 409
 
 
 @app.route('/api/servo', methods=['POST'])
@@ -160,6 +221,7 @@ if __name__ == '__main__':
     print('시작: 팔과 집게를 90도, 조향을 가운데로 보냅니다')
     arm.move_to({ch: 90 for ch in hw.ARM_SERVOS + [hw.SERVO_GRIP]})
     hw.steer(0)
+    display.start()
     camera = CameraWorker()
     distance = DistanceWorker()
     print(f'브라우저에서 http://192.168.50.2:{PORT} 접속 (종료: Ctrl+C)')

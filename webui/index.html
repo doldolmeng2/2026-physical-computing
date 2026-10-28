@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PiCar 팔 자세</title>
+<title>PiCar 디버깅</title>
 <style>
   :root {
     --bg: #f4f5f7; --card: #fff; --text: #1d2330; --muted: #6b7280; --line: #e3e6eb;
@@ -75,6 +75,20 @@
   td.act { text-align: right; white-space: nowrap; }
   td.act button { padding: 4px 10px; }
   .empty { color: var(--muted); padding: 10px 0 0; }
+  .runs { display: flex; flex-wrap: wrap; gap: 8px; }
+  button.stop { background: var(--bad); border-color: var(--bad); color: #fff; font-weight: 700; margin-left: auto; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .status { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+  @media (max-width: 520px) { .status { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .status div { background: var(--bg); border-radius: 8px; padding: 8px 10px; min-width: 0; }
+  .status span { display: block; color: var(--muted); font-size: 12px; }
+  .status b { display: block; font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .status b.run { color: var(--accent); }
+  .merr { color: var(--bad); font-weight: 600; margin-top: 8px; }
+  .merr:empty { display: none; }
+  .log { margin: 10px 0 0; padding: 0 0 0 0; list-style: none; max-height: 180px; overflow: auto;
+         font: 13px/1.6 ui-monospace, Consolas, monospace; color: var(--muted); }
+  .log li b { color: var(--text); font-weight: 500; }
   #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); padding: 10px 16px;
            border-radius: 10px; background: var(--text); color: var(--bg); opacity: 0; transition: opacity .2s;
            pointer-events: none; max-width: calc(100% - 32px); }
@@ -83,7 +97,7 @@
 </head>
 <body>
 <header>
-  <h1>PiCar 팔 자세 설정</h1>
+  <h1>PiCar 팔 자세 · 미션 디버깅</h1>
   <span class="chip" id="distChip">초음파 —</span>
   <span class="chip" id="qrChip">QR 없음</span>
 </header>
@@ -101,6 +115,25 @@
         <span class="value old" id="qrText">—</span>
         <span class="label" id="qrAge"></span>
       </div>
+    </div>
+
+    <div class="card">
+      <h2>미션 디버깅</h2>
+      <div class="runs">
+        <button class="primary" data-run="full">main 처음부터</button>
+        <button data-run="arm" data-side="left">LEFT 강제 → 팔만</button>
+        <button data-run="arm" data-side="right">RIGHT 강제 → 팔만</button>
+        <button class="stop" data-run="stop">정지</button>
+      </div>
+      <p class="hint">"main 처음부터": QR 자세 → QR 대기 → 주행·정지 → 물체 2개. "강제 → 팔만": 로봇을 정지선에 미리 두고 물체 옮기기만.</p>
+      <div class="status">
+        <div><span>모드</span><b id="mMode">IDLE</b></div>
+        <div><span>QR</span><b id="mQr">-</b></div>
+        <div><span>단계</span><b id="mStep">-</b></div>
+        <div><span>세부</span><b id="mDetail">-</b></div>
+      </div>
+      <div class="merr" id="mErr"></div>
+      <ol class="log" id="mLog"></ol>
     </div>
   </section>
 
@@ -228,6 +261,33 @@ function renderPoses() {
   for (const b of $('poseTable').querySelectorAll('button')) b.onclick = () => poseAction(b.dataset.a, b.dataset.n);
 }
 
+// ---- 미션 ----
+for (const b of document.querySelectorAll('[data-run]')) {
+  b.onclick = async () => {
+    const run = b.dataset.run;
+    if (run === 'full' && !confirm('main 을 처음부터 실행합니다. 바퀴가 움직입니다. 로봇이 출발선에 있나요?')) return;
+    if (run === 'arm' && !confirm(`${b.dataset.side.toUpperCase()} 로 정하고 팔 미션만 실행합니다. 로봇이 정지선에 있나요?`)) return;
+    try {
+      await post('/api/mission/' + run, run === 'arm' ? {side: b.dataset.side} : {});
+      toast(run === 'stop' ? '정지 요청' : '미션 시작');
+      refresh();
+    } catch (e) { toast(e.message); }
+  };
+}
+
+function renderMission(m) {
+  $('mMode').textContent = m.mode + (m.running ? ' (실행 중)' : '');
+  $('mMode').className = m.running ? 'run' : '';
+  $('mQr').textContent = m.qr || '-';
+  $('mStep').textContent = m.step || '-';
+  $('mDetail').textContent = m.detail || '-';
+  $('mErr').textContent = m.error ? '오류: ' + m.error : '';
+  const esc = x => String(x).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+  $('mLog').innerHTML = m.log.slice().reverse().map(([t, msg]) => `<li>${t} <b>${esc(msg)}</b></li>`).join('');
+  for (const b of document.querySelectorAll('[data-run]:not([data-run=stop]), .servo button, .servo input, #saveBtn, #poseTable button'))
+    b.disabled = m.running;
+}
+
 // ---- 상태 갱신 ----
 let poseKey = '';
 async function refresh() {
@@ -262,6 +322,7 @@ async function refresh() {
 
   const key = JSON.stringify(s.poses);
   if (key !== poseKey) { poseKey = key; renderPoses(); }
+  renderMission(s.mission);
 }
 refresh();
 setInterval(refresh, 300);

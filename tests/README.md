@@ -63,13 +63,13 @@ python3 tests/test_arm.py
 ```bash
 python3 tests/test_ultrasonic.py
 ```
-0.2초마다 출력: `raw` = 한 번 잰 값, `median` = 5번 재서 중앙값 (`drive.py` 가 쓰는 방식).
+0.2초마다 출력: `raw` = 한 번 잰 값, `median` = 5번 재서 중앙값 (정지 후 위치 확인에 사용하는 방식).
 
 | 확인할 것 | 결과로 채울 값 |
 |---|---|
 | 자로 잰 거리와 비슷한지 (예: 30cm, 50cm 에 물체) | 차이가 크면 배선·센서 각도 확인 |
 | raw 가 얼마나 튀는지, median 은 안정적인지 | 튀면 `distance_median(n)` 의 `n` 키우기 |
-| **초음파 센서를 빨간 정지선 위에 두고** 모니터까지 median 값 | `drive.py` 의 `STOP_DISTANCE_CM` 출발값 |
+| **초음파 센서를 빨간 정지선 위에 두고** 모니터까지 median 값 | `drive.py` 의 `DISTANCE_OFFSET_CM` 보정 (실제 30cm - 센서값) |
 
 모니터 화면은 매끈해서 각도가 비스듬하면 값이 튈 수 있다. 정면으로 둔다.
 
@@ -94,7 +94,7 @@ python3 tests/test_motor.py
 | `f 30 1` 에서 두 바퀴 모두 앞으로 도는지 | 뒤로 도는 쪽 `hw.py` `M1_DIR`(왼쪽) / `M2_DIR`(오른쪽) 부호 바꾸기 |
 | `st -30` 이 왼쪽인지 오른쪽인지 | `hw.steer()` 주석 |
 | 바닥에서 `f 30 2` 로 똑바로 가는 조향 각도 (`sa` 로 바꿔가며) | `hw.py` 의 `STEER_CENTER` |
-| 느린 속도부터 달려 보고, 멈췄을 때 밀리는 거리 | `drive.py` 의 `DRIVE_SPEED` (+ 밀린 만큼 `STOP_DISTANCE_CM`) |
+| 느린 속도부터 달려 보고, 멈췄을 때 밀리는 거리 | `drive.py` 의 속도 3단계와 `BRAKE_ADVANCE_CM` |
 
 너무 낮은 속도(예: 10 이하)는 모터가 힘이 부족해 안 돌 수 있다.
 
@@ -110,4 +110,4 @@ python3 tests/test_motor.py
 | `GRIP_OPEN` / `GRIP_CLOSE` | | |
 | QR 글자 | | |
 | 정지선에서 초음파 값 | | |
-| `DRIVE_SPEED` / `STOP_DISTANCE_CM` | | |
+| 속도 3단계 / `DISTANCE_OFFSET_CM` / `BRAKE_ADVANCE_CM` | | |

@@ -66,12 +66,56 @@ python3 main.py               # 전체 미션
 | `move_to(step, delay)` | 한 번에 움직이는 각도(°)와 간격(초). 작을수록 부드럽고 느림 | `2`, `0.02` | 팔이 흔들리거나 물체를 넘어뜨리면 줄인다 |
 
 ### drive.py
-| 값 | 의미 | 현재 | 찾는 법 |
-|---|---|---|---|
-| `STOP_DISTANCE_CM` | 초음파 값이 이 값 이하가 되면 정지 (cm) | `None` | 초음파 센서를 **빨간 정지선 위**에 두고 `test_ultrasonic.py` 의 median 값 → 실제로 달려 보고 밀린 만큼 크게 |
-| `DRIVE_SPEED` | 직진 속도 (0~100) | `None` | `test_motor.py` 로 바닥에서 달려 보고, 정지선을 넘지 않고 멈추는 속도 |
 
-정지선 판정: 빨간 선(폭 2cm) 위 만점, 노란 선(앞뒤 각 2cm) 감점, 넘어가면 실격. 정지 위치는 **초음파 센서 위치** 기준.
+초음파 **센서 전면 → 노트북/모니터 전면** 거리가 30cm인 위치에 정지한다.
+빨간색을 카메라로 판별하지 않으며, 정지선 중심이
+모니터에서 30cm인 경기장 배치를 전제로 한다.
+
+| 값 | 초기값 | 의미 |
+|---|---|---|
+| `STOP_DISTANCE_CM` | `30.0` | 최종 목표 거리 (차체/집게가 아닌 센서 기준) |
+| `DISTANCE_OFFSET_CM` | `0.0` | 자로 잰 실제 거리 - 센서 표시값 |
+| `BRAKE_ADVANCE_CM` | `0.0` | 정지 명령 후 밀리는 거리만큼 일찍 제동 |
+| `DRIVE_SPEED / SLOW_SPEED / CREEP_SPEED` | `30 / 22 / 18` | 전진 PWM %. 실차 보정 전 초기값 |
+| `SLOW_DISTANCE_CM / CREEP_DISTANCE_CM` | `50 / 38` | 감속 시작 거리 (cm) |
+| `STOP_TOLERANCE_CM` | `1.0` | 최종 측정값 허용 오차 (폭 2cm 빨간 선 기준) |
+| `MAX_DRIVE_SECONDS` | `20.0` | 최대 접근 시간. 초과 시 정지하고 실패 |
+
+`python3 drive.py`로 **주행만** 시험한다. QR을 기다리지 않고 출발하므로,
+미션 전체에서는 기존 `python3 main.py`를 사용한다.
+
+```bash
+sudo systemctl stop Adeept_Robot.service
+python3 tests/test_ultrasonic.py  # Ctrl+C로 종료한 뒤 다음 명령 실행
+python3 tests/test_motor.py      # 방향과 조향 확인 후 q로 종료
+python3 drive.py
+```
+
+1. 센서가 모니터 정면을 향하도록 두고, 센서 전면을 빨간 선 중심(실측 30cm)에 맞춘다.
+   센서가 29.2cm를 표시하면 `DISTANCE_OFFSET_CM = 0.8`로 보정한다.
+2. 바퀴를 띄워 전진 방향을 확인하고 `hw.py`의 `M1_DIR`, `M2_DIR`를 맞춘다.
+   바닥에서 `STEER_CENTER`로 직진을 맞춘다. 초음파 한 개로는 주행 방향을 알 수 없다.
+3. 정지선보다 뒤에서 `python3 drive.py`를 실행한다. 50cm, 38cm에서 감속한다.
+   근접 속도 18%에서 바퀴가 안 돌면 `CREEP_SPEED`를 올려 실제로 움직이는 최소값을 찾는다.
+4. 멈춘 후 **자로 센서 전면 거리**를 재고 출력값과 비교한다.
+   예를 들어 29.4cm에서 멈췄다면 `BRAKE_ADVANCE_CM`을 약 0.6cm 늘려 다시 시험한다.
+   배터리, 바닥, 팔 자세가 달라지면 반복 보정한다. 정확히 30.0cm 정지는 실차 검증이 필요하다.
+
+주행 중에는 새 에코 하나마다 판단한다. 목표 이하 값이 오면 먼저 정지한 뒤,
+0.3초 안정화 후 새 측정 5개의 중앙값으로 최종 위치를 확인한다.
+허용 범위를 벗어나거나 에코 미수신/비정상 값/시간 초과가 발생하면 예외를 내어
+`main.py`가 팔 미션을 진행하지 않게 한다. 정지 후 자동 재전진/후진은 하지 않는다.
+Ctrl+C와 예외에도 모터 정지 명령을 보낸다. 최종 측정 오차 판정만으로 실제 선 위 정지를 보장할 수는 없다.
+
+`hw.py`는 gpiozero 2.x `DistanceSensor._read()`를 확장해 새 측정과 미수신을 구분한다.
+기본 이력 필터로 생기는 지연과 에코 미수신 때 과거 값을 재사용하는 문제를 피하기 위한 것이다.
+라이브러리 버전 변경 시 `tests/test_ultrasonic.py`로 실제 측정과 미수신 동작을 확인한다.
+참고: [gpiozero DistanceSensor 소스](https://github.com/gpiozero/gpiozero/blob/v2.0.1/gpiozero/input_devices.py).
+
+PC에서 하드웨어 없이 주행 로직 검사:
+```bash
+python3 -m unittest discover -s tests -p '*_logic.py'
+```
 
 ### qr.py
 | 값 | 의미 | 찾는 법 |

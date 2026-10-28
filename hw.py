@@ -106,11 +106,37 @@ def steer(offset=0):
 
 
 # ---------------- 초음파 ----------------
-def distance_cm():
+class _FreshDistanceSensor(DistanceSensor):
+    """gpiozero의 과거 중앙값 대신 새 측정과 에코 실패를 전달한다.
+
+    gpiozero 2.x의 _read() 확장: 반환값은 정규화 거리 또는 None이다.
+    기본 queue는 None을 버려 에코가 끊겨도 과거 거리를 계속 내보낸다.
+    """
+    def __init__(self, **kwargs):
+        self.latest_sample = None
+        super().__init__(**kwargs)
+
+    def _read(self):
+        value = super()._read()
+        self.latest_sample = (time.monotonic(), value)
+        return value
+
+
+def distance_cm(timeout=0.5):
+    """호출 후 완료된 새 에코 하나를 cm로 반환. 미수신/갱신 중단은 예외."""
     global _ultra
+    started = time.monotonic()
     if _ultra is None:
-        _ultra = DistanceSensor(echo=ULTRA_ECHO, trigger=ULTRA_TRIG, max_distance=2)
-    return _ultra.distance * 100
+        _ultra = _FreshDistanceSensor(echo=ULTRA_ECHO, trigger=ULTRA_TRIG,
+                                     max_distance=2, queue_len=1, partial=True)
+    while time.monotonic() - started < timeout:
+        sample = _ultra.latest_sample
+        if sample is not None and sample[0] > started:
+            if sample[1] is None:
+                raise RuntimeError('초음파 에코 미수신: 배선과 모니터 방향을 확인하세요')
+            return sample[1] * _ultra.max_distance * 100
+        time.sleep(0.002)
+    raise TimeoutError('초음파 새 측정 시간 초과')
 
 
 def distance_median(n=5, gap=0.02):
